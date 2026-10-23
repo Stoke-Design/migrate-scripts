@@ -4,7 +4,9 @@
  *   pnpm wp:cleanup audit   <backup-dir> [--root <wp-root>] [--sql <dump>] [--verify-core]
  *   pnpm wp:cleanup remove  <backup-dir> [--root <wp-root>] --paths wp-content/plugins/foo,wp-config-sample.php   (or --file paths.json | paths.txt)
  *   pnpm wp:cleanup install <backup-dir> [--root <wp-root>] [--plugin-zip <url|path>] [--theme-zip …] [--child-zip …] [--themes elementor|always|never]
- *   pnpm wp:cleanup webp    <backup-dir> [--root <wp-root>] [--sql <dump>] [--quality 82] [--png-lossy] [--dry-run]   (needs `cwebp`: brew install webp)
+ *
+ *   pnpm wp:cleanup webp    <backup-dir> [--root <wp-root>] [--sql <dump>] [--format webp|avif] [--quality 82] [--png-lossy] [--dry-run] [--again]
+ *                           (--format avif encodes with ImageMagick at its default quality, always lossy; --quality and --png-lossy then do not apply)
  *
  * <backup-dir> is the extracted backup (holds homedir/public_html and mysql/). Reports, the unused-media list and the
  * quarantine of removed files always live in <backup-dir>/_wp-cleanup/, which wp-deploy reads next. Nothing is deleted outright.
@@ -15,7 +17,7 @@ import {
   Findings, PACKAGES, WORK_DIR, findSqlDump, findWpRoots, installPackage, isElementorSite, listPlugins, listThemes, parseDump, readWpConfig, removeToQuarantine, scanCode, scanDevSites, scanJunk, scanPerformance, scanUploads, stokeStatus, verifyCore,
   type DumpInfo,
 } from './lib'
-import { convertUploads } from './webp'
+import { checkCwebp, convertAll, countBy, findConvertedAttachments, listUploadImages, precheck, rewriteDump, setImageFormat, type ImageFormat } from './webp'
 
 const [cmd, dirArg, ...rest] = process.argv.slice(2)
 const opt = (n: string) => {
@@ -151,20 +153,66 @@ async function install() {
   }
 }
 
+/** JPEG/PNG to WebP, with a rewritten copy of the dump. The original dump is never edited. */
 async function webp() {
   const { dir, root, work } = resolveSite()
-  const sql = opt('sql') ? path.resolve(opt('sql')!) : findSqlDump(dir, readWpConfig(root).dbName)
-  if (!sql) throw new Error('No database dump found (pass --sql <dump>). It is rewritten too: converting files alone would break every image URL.')
-  const r = await convertUploads(root, work, sql, { quality: Number(opt('quality') ?? 82), pngLossy: flag('png-lossy'), dryRun: flag('dry-run') })
+  const format = (opt('format') ?? 'webp') as ImageFormat
+  if (format !== 'webp' && format !== 'avif') throw new Error('--format must be webp or avif')
+  setImageFormat(format)
+  const quality = Number(opt('quality') ?? 82)
+  if (!Number.isFinite(quality) || quality < 1 || quality > 100) throw new Error('--quality must be 1 to 100')
+  const opts = { quality, pngLossy: flag('png-lossy') }
+  const dry = flag('dry-run')
+  const cfg = readWpConfig(root)
+  const sql = opt('sql') ? path.resolve(opt('sql')!) : findSqlDump(dir, cfg.dbName)
+  if (!sql) throw new Error('No SQL dump found. Pass --sql <dump>: converting the files without rewriting the database would break every image URL.')
+  const outDir = path.join(work, 'webp')
+  const out = path.join(outDir, path.basename(sql))
+  const reportFile = path.join(outDir, 'report.json')
+  const again = flag('again')
+  if (fs.existsSync(reportFile) && !again && !dry) throw new Error(`Already converted (${reportFile}). Run it once; pass --again only if you really want a second pass.`)
+  // A second pass must start from the first pass's dump, or it would throw its rewrites away.
+  const input = again && fs.existsSync(out) ? out : sql
+
+  const images = listUploadImages(root)
   const mb = (b: number) => `${(b / 1e6).toFixed(1)} MB`
-  if (flag('dry-run')) return console.log(`${r.candidates} PNG/JPEG file(s) in wp-content/uploads/YYYY/MM, ${mb(r.candidateBytes)}. Nothing changed (dry run).`)
-  const before = r.converted.reduce((a, c) => a + c.before, 0)
-  const after = r.converted.reduce((a, c) => a + c.after, 0)
-  console.log(`Converted ${r.converted.length} of ${r.candidates}: ${mb(before)} -> ${mb(after)} (saved ${mb(before - after)}).`)
-  const why: Record<string, number> = {}
-  for (const { reason } of r.skipped) why[reason] = (why[reason] ?? 0) + 1
-  for (const [reason, n] of Object.entries(why)) console.log(`  skipped ${n}: ${reason}`)
-  console.log(`Rewritten database dump (${r.dump!.changedLines} line(s) changed): ${r.dump!.out}\nOriginals quarantined in: ${r.quarantine}\nReport: ${path.join(work, 'webp', 'report.json')}`)
+  const total = images.reduce((a, i) => a + i.bytes, 0)
+  const settings = format === 'avif' ? 'AVIF via ImageMagick, default quality, lossy' : `Quality ${quality}${opts.pngLossy ? ', PNG lossy' : ', PNG lossless'}`
+  console.log(`${images.length} JPEG/PNG file(s) in wp-content/uploads/YYYY/MM, ${mb(total)}. ${settings}. Dump: ${input}`)
+
+  if (dry) {
+    const skipped = images.map(precheck).filter((s): s is NonNullable<typeof s> => s !== null)
+    console.log(`Dry run, nothing written. ${images.length - skipped.length} would be attempted; ${skipped.length} skipped already: ${JSON.stringify(countBy(skipped, (s) => s.reason))}`)
+    console.log(`Files that turn out larger as ${format.toUpperCase()} are also left as they are, so the final count and saving are known only after the real run (usually about 25 to 40 percent smaller${format === 'avif' ? ' for WebP; AVIF is often a little smaller again' : ''}).`)
+    return
+  }
+
+  console.log(checkCwebp())
+  fs.mkdirSync(outDir, { recursive: true })
+  const { converted, skipped, created } = await convertAll(images, opts, undefined, (d, n) => {
+    if (d % 500 === 0) console.error(`  ${d}/${n}`)
+  })
+  let stats
+  const tmp = `${out}.new`
+  try {
+    const conv = new Map(converted.map((c) => [c.path, c.to]))
+    const ids = await findConvertedAttachments(input, conv)
+    stats = await rewriteDump(input, tmp, cfg.prefix, conv, ids)
+    fs.renameSync(tmp, out)
+  } catch (e) {
+    for (const f of created) fs.rmSync(f, { force: true })
+    fs.rmSync(tmp, { force: true })
+    throw new Error(`Dump rewrite failed, the new .${format} files were removed and the originals are untouched: ${(e as Error).message}`)
+  }
+  const { dest } = converted.length ? removeToQuarantine(root, work, converted.map((c) => `wp-content/uploads/${c.path}`)) : { dest: null }
+  if (fs.existsSync(reportFile)) fs.renameSync(reportFile, path.join(outDir, `report-before-${Date.now()}.json`))
+  const before = converted.reduce((a, c) => a + c.before, 0)
+  const after = converted.reduce((a, c) => a + c.after, 0)
+  fs.writeFileSync(reportFile, JSON.stringify({ generatedAt: new Date().toISOString(), format, options: opts, input, output: out, quarantine: dest, totals: { converted: converted.length, bytesBefore: before, bytesAfter: after, skipped: countBy(skipped, (s) => s.reason) }, rewrite: stats, converted, skipped }, null, 2))
+  console.log(`Converted ${converted.length} of ${images.length}: ${mb(before)} -> ${mb(after)} (saved ${mb(before - after)}).`)
+  console.log(`Left as they are: ${skipped.length} ${JSON.stringify(countBy(skipped, (s) => s.reason))}`)
+  console.log(`Dump rewrite: ${stats.textRewrites} text reference(s), ${stats.metadataRows} attachment metadata row(s), ${stats.mimeChanged} mime type(s), ${stats.serializedFixed} serialized length(s) fixed${stats.metadataFallback ? `, ${stats.metadataFallback} metadata value(s) NOT parsed (check them)` : ''}.`)
+  console.log(`Rewritten dump:  ${out}\nQuarantine:      ${dest ?? '(nothing moved)'}\nReport:          ${reportFile}\nwp-deploy must import the rewritten dump, not the original.`)
 }
 
 const main = cmd === 'audit' ? audit : cmd === 'remove' ? remove : cmd === 'install' ? install : cmd === 'webp' ? webp : null
