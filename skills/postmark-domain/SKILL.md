@@ -8,9 +8,9 @@ description: Set up a migrated site on SpinupWP end to end for email and hosting
 Every outward-facing step below needs its own explicit yes: show what you will do (dry run or the exact values), wait, then do it. Never print or echo token values and never ask the user to paste one into chat.
 
 ## 0. Ask first: do you have `~/.migrate-2026.env`?
-Ask the user. It must hold `POSTMARK_ACCOUNT_TOKEN`, `CLOUDFLARE_API_TOKEN` and `SPINUPWP_API_TOKEN`. If they do not have it, point them to POSTMARK.md (they can get a copy from a teammate or create it) and stop until it exists. Load it with `set -a; . ~/.migrate-2026.env; set +a`; do not `cat` it.
+Ask the user. It must hold `POSTMARK_ACCOUNT_TOKEN`, `CLOUDFLARE_API_TOKEN` and `SPINUPWP_API_TOKEN`. If they do not have it, point them to POSTMARK.md (they can get a copy from a teammate or create it) and stop until it exists. Do not `cat` it.
 
-SpinupWP API: base `https://api.spinupwp.app/v1` (the `.com` address is only the docs), header `Authorization: Bearer $SPINUPWP_API_TOKEN`. Changes return an `event_id`: poll `GET /events/{id}` until `deployed`.
+SpinupWP API base is `https://api.spinupwp.app/v1` (the `.com` address is only the docs). The scripts read the tokens from the file themselves, so there is no need to source it.
 
 ## 1. Blank site with a database (Spinup)
 Use the **spinupwp-new-site** skill (it keeps the credentials CSV and has its own checklist). Names to give it, from the domain's first label (`vicgroundsprayers.org.au` → `vicgroundsprayers`):
@@ -27,30 +27,26 @@ npx tsx <scripts>/postmark.ts <domain>
 ```
 This is the **domain** type ("send from any address on the domain"), not a per-address sender signature. It creates the domain with Return-Path `pm-bounces.<domain>`, adds the DKIM TXT and the Return-Path CNAME (to `pm.mtasv.net`, DNS only) in Cloudflare, and verifies. It is idempotent. If the domain's DNS is not on the Cloudflare token it prints "no matching zone": give the user the records to add by hand, then re-run to verify.
 
-## 3. Website DNS in Cloudflare
-1. Read the current `A` record for `@` and keep its address: that is the **old IP** (Synergy).
-2. Update that A record to the Spinup server IP (`ipAddress` from the board's `get_site`, or the site's server), and set its **comment** (Record Attributes) to `SYNERGY=<old IP>`. This is the rollback note.
-3. `www` must be a `CNAME` to `@` (the apex name). Leave it if it already is; create it if not.
-4. Ask whether the A record should stay proxied or go DNS-only. A proxied record with no HTTPS on the origin returns 525. DNS-only first is safer; flip to proxied once HTTPS works.
-
+## 3-6. DNS, HTTPS, page cache and backups: `spinup.ts`
+One script does Cloudflare and the Spinup settings. Without `--yes` it only reads and prints the plan:
 ```
-PATCH /zones/<zone>/dns_records/<id>   {"content":"<spinup ip>","proxied":<bool>,"comment":"SYNERGY=<old ip>"}
+npx tsx <scripts>/spinup.ts <domain>            # dry run (DNS-only A record)
 ```
-Rollback: set the A record back to the old IP. Confirm the exact change with the user before sending it. This is the cutover.
-
-## 4. HTTPS and www on Spinup
-`POST /sites/{id}/domains` with `domain=www.<domain>`, `redirect[enabled]=true`, `redirect[type]=301`, then `POST /sites/{id}/https` with `type=webroot` (Let's Encrypt, needs DNS already pointing at the server). Poll the event, then check that the apex returns 200 and `www` returns a 301 to the apex.
-
-## 5. Page cache on
-`POST /sites/{id}/page-cache` (defaults). Check with `GET /sites/{id}` → `page_cache.enabled`.
-
-## 6. Backups on (confirm the bucket first)
-Backups need a storage provider, bucket and the site's database. Copy them from a sibling site on the **same server** that already has backups (`GET /sites`, match `server_id`, read `backups.storage_provider` and `backups.schedule`). **Before changing anything, show the user the bucket, region and schedule you will use and ask if the bucket is correct.** The bucket is per server (for example `titan-prod-6-backup` on titan-prod-6), so a copy from the wrong server would be wrong. Only after a yes:
+Show the user the output and go through it with them, then apply:
 ```
-PUT /sites/{id}/backup-settings   {"storage_provider_id":<id>,"storage_provider_bucket":"<bucket>","storage_provider_region":"<region>","database":<site db id>}
-PUT /sites/{id}/backup-schedule   {"daily_schedule":{...},"weekly_schedule":{...},"monthly_schedule":{...}}
+npx tsx <scripts>/spinup.ts <domain> --yes
 ```
-The site's database id is in `GET /sites/{id}` → `database.id`. Read it all back and report.
+What it does, in order (each line is skipped when already correct, so re-running is safe):
+1. **A record for `@`** → the Spinup server IP. The old address is kept in the record comment as `SYNERGY=<old IP>` (rollback: set the record back to that IP). It reads the old IP from the current record, so run it before anything else changes the A record.
+2. **`www`** → `CNAME` to `@`. If `www` has some other record type it stops and tells you to remove it by hand.
+3. **Spinup:** adds `www` as an additional domain (301 to the primary), enables Let's Encrypt HTTPS (needs DNS already pointing at the server) and turns page cache on.
+4. **Backups:** copies the storage provider, bucket and schedule from a sibling site on the **same server** and prints them. `--no-backups` skips it.
+
+Things to ask the user:
+- **Proxied or DNS-only?** The default is DNS-only. A proxied record with no HTTPS on the origin returns 525, so run with `--yes` first, check the site, then run again with `--proxied --yes` to turn the proxy on. Only use `--proxied` from the start if the user asks.
+- **Is the backup bucket right?** The dry run prints the bucket, region and schedule and the question. Do not run `--yes` until the user has confirmed it. The bucket is per server (for example `titan-prod-6-backup` on titan-prod-6). With no sibling to copy from, the script says so and backups are set up by hand.
+
+The script finishes with the page cache, HTTPS and backup state read back from Spinup and a status check of the apex and `www`.
 
 ## Rules
 - It never touches SPF or MX, so existing mail keeps working.

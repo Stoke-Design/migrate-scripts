@@ -7,13 +7,9 @@
  * The Postmark token is the *account* token (not a server token), so one run covers any server on the account.
  * `--dry-run` only reads: it shows what would be created and touches nothing. Re-running is safe.
  */
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
+import { call, cf, findZone, loadEnvFile, requireEnv } from './common'
 
 const PM = 'https://api.postmarkapp.com'
-const CF = 'https://api.cloudflare.com/client/v4'
-const ENV_FILE = path.join(os.homedir(), '.migrate-2026.env')
 
 type PmDomain = {
   ID: number
@@ -29,39 +25,13 @@ type PmDomain = {
 }
 type CfRecord = { content: string }
 
-function loadEnvFile() {
-  if (!fs.existsSync(ENV_FILE)) return
-  for (const line of fs.readFileSync(ENV_FILE, 'utf8').split('\n')) {
-    const m = line.match(/^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*?)\s*$/)
-    if (m && !process.env[m[1]!]) process.env[m[1]!] = m[2]!.replace(/^(['"])(.*)\1$/, '$2')
-  }
-}
-
-async function call<T>(method: string, url: string, headers: Record<string, string>, body?: unknown): Promise<T> {
-  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json', ...headers }, body: body ? JSON.stringify(body) : undefined })
-  const text = await res.text()
-  if (!res.ok) throw new Error(`${method} ${url} -> ${res.status}: ${text.slice(0, 500)}`)
-  return JSON.parse(text) as T
-}
-
 const pm = <T>(method: string, p: string, body?: unknown) =>
   call<T>(method, PM + p, { Accept: 'application/json', 'X-Postmark-Account-Token': process.env.POSTMARK_ACCOUNT_TOKEN! }, body)
-const cf = <T>(method: string, p: string, body?: unknown) =>
-  call<{ result: T }>(method, CF + p, { Authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}` }, body).then((r) => r.result)
 
 async function findPostmarkDomain(name: string) {
   const { Domains } = await pm<{ Domains: { ID: number; Name: string }[] }>('GET', '/domains?count=500&offset=0')
   const hit = Domains.find((d) => d.Name.toLowerCase() === name)
   return hit ? pm<PmDomain>('GET', `/domains/${hit.ID}`) : undefined
-}
-
-/** Walk up the labels until a Cloudflare zone matches. */
-async function findZone(name: string) {
-  const parts = name.split('.')
-  for (let i = 0; i < parts.length - 1; i++) {
-    const zones = await cf<{ id: string; name: string }[]>('GET', `/zones?name=${parts.slice(i).join('.')}`)
-    if (zones[0]) return zones[0]
-  }
 }
 
 async function ensureRecord(zoneId: string, type: string, name: string, content: string, dry: boolean) {
@@ -86,9 +56,7 @@ async function main() {
   loadEnvFile()
   const [domainArg, ...rest] = process.argv.slice(2)
   if (!domainArg) throw new Error('Usage: npx tsx postmark.ts <domain> [--dry-run]')
-  for (const v of ['POSTMARK_ACCOUNT_TOKEN', 'CLOUDFLARE_API_TOKEN']) {
-    if (!process.env[v]) throw new Error(`${v} is not set (put it in ${ENV_FILE})`)
-  }
+  requireEnv('POSTMARK_ACCOUNT_TOKEN', 'CLOUDFLARE_API_TOKEN')
   const name = domainArg.toLowerCase()
   const dry = rest.includes('--dry-run')
   const returnPath = `pm-bounces.${name}`
