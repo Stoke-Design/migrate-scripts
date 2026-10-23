@@ -37,6 +37,9 @@ const sp = <T>(method: string, p: string, body?: unknown, form = false) =>
   call<T>(method, (process.env.SPINUPWP_API_BASE || 'https://api.spinupwp.app/v1') + p, { Accept: 'application/json', Authorization: `Bearer ${process.env.SPINUPWP_API_TOKEN}` }, body, form)
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+const mode = (proxied: boolean) => (proxied ? 'proxied' : 'DNS-only')
+/** Only the fields that differ, as "name old -> new". */
+const changes = (fields: [string, string, string][]) => fields.filter(([, from, to]) => from !== to).map(([k, from, to]) => `${k} ${from} -> ${to}`).join(', ')
 
 async function allSites() {
   const out: Site[] = []
@@ -103,7 +106,8 @@ async function main() {
   const comment = oldIp ? `SYNERGY=${oldIp}` : apex.comment
   if (apex.content === server.ip_address && apex.proxied === proxied && apex.comment === comment) console.log(`  = A ${name} already ${server.ip_address} (${proxied ? 'proxied' : 'DNS-only'}, ${comment ?? 'no comment'})`)
   else {
-    console.log(`  ~ A ${name}: ${apex.content} -> ${server.ip_address}, ${proxied ? 'proxied' : 'DNS-only'}, comment "${comment}" (rollback: set it back to ${oldIp ?? 'the old IP'})`)
+    const diff = changes([['address', apex.content, server.ip_address], ['proxy', mode(apex.proxied), mode(proxied)], ['comment', apex.comment ?? 'none', comment ?? 'none']])
+    console.log(`  ~ A ${name}: ${diff}${oldIp ? ` (rollback: set it back to ${oldIp})` : ''}`)
     if (yes) await cf('PATCH', `/zones/${zone.id}/dns_records/${apex.id}`, { content: server.ip_address, proxied, comment })
   }
 
@@ -111,7 +115,7 @@ async function main() {
   const cname = www.find((r) => r.type === 'CNAME')
   if (cname?.content === name && cname.proxied === proxied) console.log(`  = CNAME www already -> ${name}`)
   else if (cname) {
-    console.log(`  ~ CNAME www: ${cname.content} -> ${name}, ${proxied ? 'proxied' : 'DNS-only'}`)
+    console.log(`  ~ CNAME www: ${changes([['target', cname.content, name], ['proxy', mode(cname.proxied), mode(proxied)]])}`)
     if (yes) await cf('PATCH', `/zones/${zone.id}/dns_records/${cname.id}`, { content: name, proxied })
   } else if (www.length) console.log(`  ! www has a ${www[0]!.type} record (${www[0]!.content}): remove it by hand, then re-run`)
   else {
