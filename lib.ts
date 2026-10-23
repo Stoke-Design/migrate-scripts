@@ -15,7 +15,7 @@ export const WORK_DIR = '_wp-cleanup' // reports + quarantine live here; always 
 
 /** Packages every site should carry. Override per run with --plugin-zip / --theme-zip / --child-zip. */
 export const PACKAGES = {
-  plugin: { url: 'https://sd-plugin.stokedesign.co/update-dist/stoke-internal-tools.3.7.1.zip', folder: 'stoke-internal-tools', version: '3.7.1' },
+  plugin: { url: 'https://sd-plugin.stokedesign.co/update-dist/stoke-internal-tools.3.7.2.zip', folder: 'stoke-internal-tools', version: '3.7.2' },
   theme: { url: 'https://hellotheme.stokecloud.dev/update-parent-dist/hello-stoke.1.2.0.zip', folder: 'hello-stoke', version: '1.2.0' },
   child: { url: 'https://hellotheme.stokecloud.dev/update-child-dist/hello-stoke-child.1.2.0.zip', folder: 'hello-stoke-child', version: '1.2.0' },
 } as const
@@ -621,6 +621,9 @@ export function scanPerformance(root: string, plugins: PluginInfo[], cfg: WpConf
   if (/true/i.test(c.WP_CACHE ?? '') && !fs.existsSync(path.join(root, 'wp-content', 'advanced-cache.php'))) out.push({ severity: 'low', rule: 'wp-cache-without-dropin', detail: 'WP_CACHE is on but there is no advanced-cache.php' })
   if (!('DISALLOW_FILE_EDIT' in c)) out.push({ severity: 'low', rule: 'file-edit-allowed', detail: 'DISALLOW_FILE_EDIT not set' })
   if (/\/home\d*\//.test(`${c.WP_CONTENT_DIR ?? ''}${c.WP_TEMP_DIR ?? ''}${c.WP_PLUGIN_DIR ?? ''}`)) out.push({ severity: 'high', rule: 'hardcoded-paths', detail: 'wp-config.php defines absolute /home/... paths' })
+  // www in the site URL stops the SpinupWP temp URL working and fights the apex redirect: the base domain is the canonical host
+  const wwwUrls = [['siteurl', dump?.siteurl], ['home', dump?.home], ['WP_SITEURL', c.WP_SITEURL], ['WP_HOME', c.WP_HOME]].filter(([, u]) => /^https?:\/\/www\./i.test(u ?? ''))
+  if (wwwUrls.length) out.push({ severity: 'medium', rule: 'siteurl-www', detail: `${wwwUrls.map(([n, u]) => `${n} = ${u}`).join(', ')}: use the base domain without www, or the SpinupWP temp URL redirects to www and cannot be viewed` })
   if (dump) {
     if (dump.autoloadBytes > 1_000_000) out.push({ severity: dump.autoloadBytes > 3_000_000 ? 'high' : 'medium', rule: 'autoload-bloat', detail: `Autoloaded options total ${(dump.autoloadBytes / 1e6).toFixed(1)} MB (aim for under 1 MB). Largest: ${dump.topAutoload.slice(0, 5).map((o) => `${o.name} ${(o.bytes / 1000).toFixed(0)}KB`).join(', ')}` })
     if (dump.transientBytes > 500_000 || dump.transientCount > 500) out.push({ severity: 'medium', rule: 'transients', detail: `${dump.transientCount} transient rows, ${(dump.transientBytes / 1e6).toFixed(1)} MB — safe to purge` })

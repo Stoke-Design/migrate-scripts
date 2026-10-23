@@ -31,7 +31,7 @@ Cleans a WordPress site saved locally from a cPanel backup before migration. Onl
 ## What gets installed (always inactive)
 | Package | Sites | Notes |
 |---|---|---|
-| Stoke Internal Tools 3.7.1 | Every site | Older Stoke plugin copies are removed first (you confirm). |
+| Stoke Internal Tools (latest, currently 3.7.2) | Every site | Older Stoke plugin copies are removed first (you confirm). |
 | Hello Stoke 1.2.0 + Hello Stoke Child 1.2.0 | Elementor sites only | An existing `hello-stoke` or child folder is never overwritten. |
 
 Activation is not part of this: it's a separate approval in the migration board (plugin) or done by a person (theme).
@@ -45,11 +45,13 @@ npx tsx <scripts>/cli.ts audit   <site> [--sql <dump>] [--verify-core]
 npx tsx <scripts>/cli.ts remove  <site> --paths wp-config-sample.php,wp-content/updraft
 npx tsx <scripts>/cli.ts install <site>          # downloads the 3 Stoke packages
 ```
-Convert the media library to WebP (the **wp-webp** skill; needs `brew install webp`; run after cleanup, before deploy):
+Convert the media library to WebP or AVIF (the **wp-webp** skill; run after cleanup, before deploy):
 ```bash
 npx tsx <scripts>/cli.ts webp <site> --dry-run   # counts only
-npx tsx <scripts>/cli.ts webp <site> [--quality 82] [--png-lossy]
+npx tsx <scripts>/cli.ts webp <site> [--format webp|avif] [--quality 82] [--png-lossy]
 ```
+`--format webp` (default) needs `cwebp` (`brew install webp`) and converts at `--quality` (JPEG lossy, PNG lossless unless `--png-lossy`), replacing the extension (`photo.jpg` -> `photo.webp`).
+`--format avif` needs ImageMagick with AVIF support (`brew install imagemagick`; check `magick -list format | grep AVIF`) and always encodes lossy at ImageMagick's default quality (`--quality`/`--png-lossy` do not apply), resizing only if the longest side exceeds 2560px. It keeps the original extension and appends `.avif` (`photo.jpg` -> `photo.jpg.avif`) so the source format stays visible.
 Originals are quarantined and the database dump is **rewritten into `_wp-cleanup/webp/`**; deploy that copy, not `mysql/<db>.sql`.
 
 Paths for `remove` are relative to the WordPress root. `--verify-core` compares core files with wordpress.org's checksums. `install` also takes `--plugin-zip`, `--theme-zip`, `--child-zip` (URL or local file) and `--themes always|never`.
