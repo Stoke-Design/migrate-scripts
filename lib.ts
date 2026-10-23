@@ -534,8 +534,10 @@ export function scanCode(root: string, malware: Findings, leftovers: Findings) {
     if (w.name === '.htaccess' || w.name === '.user.ini' || w.name === 'php.ini') {
       const m = /auto_(?:prepend|append)_file\s*[= ]\s*['"]?([^\s'"]+)/i.exec(text)
       if (m) {
-        // Wordfence's WAF legitimately sets this, but with the old server's absolute path — fatal on the new host.
-        if (/wordfence-waf\.php/.test(m[1]!)) leftovers.add({ severity: 'high', rule: 'wordfence-waf-prepend', path: r, line: lineOf(m.index), detail: 'auto_prepend_file points at the old server path; remove or the site fatals on the new host', action: 'review' })
+        // Wordfence's WAF legitimately sets this, with the old server's absolute path. That's an Apache/php.ini concern;
+        // migrations target SpinupWP's nginx, where auto_prepend_file doesn't apply, so this is informational, not a blocker.
+        // Keep Wordfence itself — do not recommend removing the plugin.
+        if (/wordfence-waf\.php/.test(m[1]!)) leftovers.add({ severity: 'low', rule: 'wordfence-waf-prepend', path: r, line: lineOf(m.index), detail: 'auto_prepend_file points at the old server path (Apache-only concern; inert on SpinupWP nginx) — keep Wordfence, no action needed', action: 'review' })
         else malware.add({ severity: 'high', rule: 'auto-prepend', path: r, line: lineOf(m.index), detail: snippet(m.index, 80) })
       }
       if (/RewriteCond\s+%\{HTTP_(?:USER_AGENT|REFERER)\}[^\n]*(?:google|bing|yahoo|yandex)[^\n]*\n(?:[^\n]*\n){0,2}\s*RewriteRule[^\n]*https?:\/\//i.test(text)) malware.add({ severity: 'medium', rule: 'htaccess-search-referrer-redirect', path: r, detail: 'Redirects search visitors elsewhere — classic SEO spam' })

@@ -59,7 +59,7 @@ Paths for `remove` are relative to the WordPress root. `--verify-core` compares 
 ## Good to know
 - **Working inside Google Drive:** the extracted copy sits next to the archive in the site folder, as agreed. Only `public_html` and the database are extracted, so the cPanel password files and API tokens in the backup stay inside the archive. The quarantine does copy removed files (including any malware found) into the same drive; removals go to the Drive trash, recoverable for a while.
 - If the scan finds confirmed malware, Claude stops and checks with you before going on.
-- A Wordfence `auto_prepend_file` line pointing at the old server will crash the site on the new host. Claude flags it.
+- Keep Wordfence — don't remove it during cleanup. A Wordfence `auto_prepend_file` line pointing at the old server path is an Apache/php.ini-era concern; it's inert on SpinupWP's nginx, so Claude notes it but doesn't treat it as a blocker.
 - The scan is signature-based only. It doesn't check images or the database.
 - Versions live in `PACKAGES` at the top of `lib.ts`. Change them there when a new release ships.
 
