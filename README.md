@@ -62,3 +62,6 @@ Paths for `remove` are relative to the WordPress root. `--verify-core` compares 
 - A Wordfence `auto_prepend_file` line pointing at the old server will crash the site on the new host. Claude flags it.
 - The scan is signature-based only. It doesn't check images or the database.
 - Versions live in `PACKAGES` at the top of `lib.ts`. Change them there when a new release ships.
+
+## Other scripts
+- **Postmark domains**: see [POSTMARK.md](POSTMARK.md) (also sets up `~/.migrate-2026.env` for the shared tokens).
