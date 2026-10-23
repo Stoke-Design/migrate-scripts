@@ -35,6 +35,15 @@ Things only you can do in the SpinupWP dashboard: create the database and user (
 
 Paste the handover block the skill prints at the end into Hanibal. It updates the Stoke Migrate card and saves the SSH access block to the site's notes. It contains no passwords.
 
+## 3b. Postmark sender domain (postmark-domain)
+
+Needs `~/.migrate-2026.env` (see POSTMARK.md). Dry run first, then one yes.
+
+```
+Use the postmark-domain skill for <domain> using scripts at /Users/<you>/Documents/migration-scripts.
+Run the dry run first and show me the output. Wait for my yes before creating anything.
+```
+
 ## 4. Later changes with WP-CLI
 
 Template:
