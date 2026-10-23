@@ -5,16 +5,15 @@ Cleans a WordPress site saved locally from a cPanel backup before migration. Onl
 ## You need
 - The `wp-cleanup` skill installed in Claude Code.
 - Node 20+ and `unzip` (both already on a Stoke Mac).
-- The scripts folder. Ours is on the shared drive:
-  `~/Library/CloudStorage/GoogleDrive-<you>/Shared drives/SD Work In Progress/[26181] The great Website Migration of 26' - Stoke Design Co/scripts/` (holds `cli.ts` and `lib.ts`).
-- The site's cPanel backup. If the site folder only holds the `backup-….tar.gz`, Claude extracts **only `homedir/public_html/` and `mysql/`** into that same site folder, next to the archive, and keeps the archive. That extracted `backup-…/` folder is the "backup folder" for both this skill and wp-deploy. The `.sql` is optional but it tells Claude which plugins and theme are active and which uploads are unused.
+- This repo (`https://github.com/Stoke-Design/migrate-scripts`), cloned somewhere local — e.g. `~/Documents/working-sites/_migrate-scripts`. `git pull` it before a run to get the latest. (Don't use the old shared Google Drive copy of the scripts; it goes stale.)
+- The site's cPanel backup. If the site folder only holds the `backup-….tar.gz`, extract **only `homedir/public_html/` and `mysql/`** into a local, non-Drive working folder — never extract into the site's Google Drive folder. The exact local path varies by person (e.g. `~/Documents/working-sites/<domain>/`, `~/Desktop/migrate-clean/<domain>/`); say where yours goes. Keep the original archive wherever it already is. That extracted `backup-…/` folder is the "backup folder" for both this skill and wp-deploy. The `.sql` is optional but it tells Claude which plugins and theme are active and which uploads are unused.
 
 ## Run it
 1. Open Claude Code in any folder and say, with your real paths:
 
-   > Use the wp-cleanup skill on `<…>/sites/wellmeasured.com.au`. The scripts are in `<…>/Stoke Design Co/scripts`.
+   > Use the wp-cleanup skill using the scripts from `https://github.com/Stoke-Design/migrate-scripts` (clone to `~/Documents/working-sites/_migrate-scripts` if it isn't there, else `git pull`). The backup is `<path to backup-*.tar.gz>`. Extract only `homedir/public_html` and `mysql` into `<your local working folder>/<domain>/` (not the Google Drive).
 
-   Paths on the shared drive contain spaces, brackets and an apostrophe, so quote them. In a terminal, wrap the whole path in double quotes. The audit uses `homedir/public_html`; any other WordPress install inside it is reported as a dev-site candidate.
+   If a path is on the shared drive (e.g. the source archive) it may contain spaces, brackets and an apostrophe, so quote it. In a terminal, wrap the whole path in double quotes. The audit uses `homedir/public_html`; any other WordPress install inside it is reported as a dev-site candidate.
 2. Claude runs a read-only **audit** and walks you through it, asking you before anything is removed:
    1. Plugins: which to delete
    2. Themes: which to delete (it reads old themes' custom code first and tells you what would be lost)
@@ -57,7 +56,7 @@ Originals are quarantined and the database dump is **rewritten into `_wp-cleanup
 Paths for `remove` are relative to the WordPress root. `--verify-core` compares core files with wordpress.org's checksums. `install` also takes `--plugin-zip`, `--theme-zip`, `--child-zip` (URL or local file) and `--themes always|never`.
 
 ## Good to know
-- **Working inside Google Drive:** the extracted copy sits next to the archive in the site folder, as agreed. Only `public_html` and the database are extracted, so the cPanel password files and API tokens in the backup stay inside the archive. The quarantine does copy removed files (including any malware found) into the same drive; removals go to the Drive trash, recoverable for a while.
+- **Never extract or work on the backup inside Google Drive.** The extracted copy belongs in a local, non-Drive working folder (ask the user where theirs is). Only `public_html` and the database are extracted, so the cPanel password files and API tokens in the backup stay inside the archive, which can stay on the Drive. The quarantine lives alongside the extracted copy, so it's local too — not in the Drive trash.
 - If the scan finds confirmed malware, Claude stops and checks with you before going on.
 - A Wordfence `auto_prepend_file` line pointing at the old server will crash the site on the new host. Claude flags it.
 - The scan is signature-based only. It doesn't check images or the database.
